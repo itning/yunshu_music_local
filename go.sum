@@ -1,0 +1,4 @@
+github.com/hjfreyer/taglib-go v0.0.0-20250508221915-cb3b18d1ad7b h1:205iYsSfmwawdcrADhzrnRSUeujcigFWPl0qbNuAJSs=
+github.com/hjfreyer/taglib-go v0.0.0-20250508221915-cb3b18d1ad7b/go.mod h1:eSDoUM0WCOj3y5CUX9yQVbMSlGd4YSd/ukmLIhxLZaI=
+github.com/unitnotes/audiotag v0.1.0 h1:HPJ2MxPKJX4NJvv6Zb6bNtyhPGCgATAeVP7fPn4zoW0=
+github.com/unitnotes/audiotag v0.1.0/go.mod h1:jc9bJbSj9+6OkJSDJfJv40jWfhOGCi7M4W23dp8frGA=
