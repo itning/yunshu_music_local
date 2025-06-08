@@ -2,30 +2,34 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	tag "github.com/unitnotes/audiotag"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
-// Music 定义音乐文件结构
+// Music defines the structure of music file
 type Music struct {
-	MusicId  string `json:"musicId"`
-	Name     string `json:"name"`
-	Singer   string `json:"singer"`
-	LyricId  string `json:"lyricId"`
-	Type     int    `json:"type"`
-	MusicUri string `json:"musicUri"`
-	LyricUri string `json:"lyricUri"`
-	CoverUri string `json:"coverUri"`
-	FilePath string `json:"-"`
+	MusicId          string `json:"musicId"`
+	Name             string `json:"name"`
+	Singer           string `json:"singer"`
+	LyricId          string `json:"lyricId"`
+	Type             int    `json:"type"`
+	MusicUri         string `json:"musicUri"`
+	MusicDownloadUri string `json:"musicDownloadUri"`
+	LyricUri         string `json:"lyricUri"`
+	CoverUri         string `json:"coverUri"`
+	FilePath         string `json:"-"`
 }
 
-// Response 定义API响应结构
+// Response defines API response structure
 type Response struct {
 	Code int     `json:"code"`
 	Msg  string  `json:"msg"`
@@ -42,75 +46,74 @@ var musicExtMap = map[string]bool{
 }
 
 func main() {
-	// 获取启动时指定的目录或文件参数（最多5个）
-	paths := os.Args[1:]
-	if len(paths) == 0 {
-		log.Fatal("请在启动时指定至少一个目录或文件")
+	var (
+		portFlag string
+		dirFlag  string
+	)
+
+	flag.StringVar(&portFlag, "p", "8080", "Specify the port for service monitoring")
+	flag.StringVar(&dirFlag, "d", "", "Specify the directory where the music file resides")
+	flag.Parse()
+
+	if dirFlag == "" {
+		log.Fatal("A directory must be specified through -d")
 	}
-	if len(paths) > 5 {
-		log.Println("警告：最多只处理前5个目录或文件")
-		paths = paths[:5]
-	}
 
-	// 遍历指定目录，查找音乐文件
-	for _, path := range paths {
-		err := filepath.Walk(path, func(filePath string, info os.FileInfo, err error) error {
-			if err != nil {
-				return err
-			}
+	path := dirFlag
 
-			// 如果是文件且扩展名匹配
-			if !info.IsDir() {
-				ext := strings.ToLower(filepath.Ext(filePath))
-				if musicExtMap[ext] {
-					processMusicFile(filePath)
-				}
-			}
-
-			return nil
-		})
-
+	err := filepath.Walk(path, func(filePath string, info os.FileInfo, err error) error {
 		if err != nil {
-			log.Printf("遍历路径 %s 时出错: %v\n", path, err)
+			return err
 		}
+
+		// If it is a file and the extension matches
+		if !info.IsDir() {
+			ext := strings.ToLower(filepath.Ext(filePath))
+			if musicExtMap[ext] {
+				processMusicFile(filePath)
+			}
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		log.Printf("An error occurred while traversing the directory %s: %v\n", path, err)
 	}
 
-	// HTTP路由
+	// HTTP routing
 	http.HandleFunc("/music", musicHandler)
+	http.HandleFunc("/music/file/download/", musicFileDownloadHandler)
 	http.HandleFunc("/music/file/", musicFileHandler)
 	http.HandleFunc("/music/lyric/", lyricHandler)
 	http.HandleFunc("/music/cover/", coverHandler)
 
-	// 启动HTTP服务
-	log.Println("服务已启动，正在监听 :8080")
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	// Start HTTP service
+	log.Printf("The service has been started and is listening :%s\n", portFlag)
+	log.Fatal(http.ListenAndServe(":"+portFlag, nil))
 }
 
 func processMusicFile(filePath string) {
 	f, err := os.Open(filePath)
 	if err != nil {
-		log.Printf("无法打开文件: %v\n", err)
+		log.Printf("Unable to open the file: %v\n", err)
 		return
 	}
 	m, err := tag.ReadFrom(f)
 	if err != nil {
-		log.Printf("读取标签失败: %v\n", err)
+		log.Printf("Failed to read the tag: %v\n", err)
 		return
 	}
 
-	// 创建唯一ID（这里简单使用文件路径哈希）
+	// Create a unique ID (simply use file path hash here)
 	musicId := strconv.FormatInt(int64(filePath[len(filePath)-1]), 10)
-
-	// 构建音乐对象
+	// Building music objects
 	music := Music{
 		MusicId:  musicId,
 		Name:     m.Title(),
 		Singer:   m.Artist(),
 		LyricId:  musicId,
 		Type:     determineMusicType(filePath),
-		MusicUri: "/music/file/" + musicId,
-		LyricUri: "/music/lyric/" + musicId,
-		CoverUri: "/music/cover/" + musicId,
 		FilePath: filePath,
 	}
 
@@ -135,10 +138,14 @@ func determineMusicType(filename string) int {
 }
 
 func musicHandler(w http.ResponseWriter, r *http.Request) {
-	// 设置CORS头部
 	w.Header().Set("Access-Control-Allow-Origin", "*")
-
-	// 设置JSON响应内容
+	for i := range musicList {
+		music := &musicList[i]
+		music.MusicUri = fmt.Sprintf("http://%s/music/file/%s", r.Host, music.MusicId)
+		music.CoverUri = fmt.Sprintf("http://%s/music/cover/%s", r.Host, music.MusicId)
+		music.LyricUri = fmt.Sprintf("http://%s/music/lyric/%s", r.Host, music.MusicId)
+		music.MusicDownloadUri = fmt.Sprintf("http://%s/music/file/download/%s", r.Host, music.MusicId)
+	}
 	response := Response{
 		Code: 200,
 		Msg:  "查询成功",
@@ -149,29 +156,94 @@ func musicHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
+func getContentTypeByMusicType(musicType int) string {
+	switch musicType {
+	case 1: // FLAC
+		return "audio/flac"
+	case 2: // MP3
+		return "audio/mpeg"
+	case 3: // WAV
+		return "audio/wav"
+	case 4: // AAC
+		return "audio/aac"
+	default:
+		return "application/octet-stream"
+	}
+}
+
 func musicFileHandler(w http.ResponseWriter, r *http.Request) {
 	musicId := strings.TrimPrefix(r.URL.Path, "/music/file/")
 	if val, ok := musicIdMap[musicId]; ok {
-		http.ServeFile(w, r, val.FilePath)
+		filePath := val.FilePath
+		f, err := os.Open(filePath)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		defer f.Close()
+
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+		w.Header().Set("Pragma", "no-cache")
+		w.Header().Set("Expires", "0")
+
+		var contentType = getContentTypeByMusicType(val.Type)
+		w.Header().Set("Content-Type", contentType)
+
+		filename := filepath.Base(filePath)
+		encodedFilename := url.PathEscape(filename)
+		headerValue := fmt.Sprintf("inline; filename=\"%s\"; filename*=UTF-8''%s", filename, encodedFilename)
+		w.Header().Set("Content-Disposition", headerValue)
+
+		modTime := time.Time{}
+		http.ServeContent(w, r, filename, modTime, f)
 	} else {
 		http.NotFound(w, r)
 	}
+}
+
+func musicFileDownloadHandler(w http.ResponseWriter, r *http.Request) {
+	musicId := strings.TrimPrefix(r.URL.Path, "/music/file/download/")
+	music, ok := musicIdMap[musicId]
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+
+	filename := filepath.Base(music.FilePath)
+	encodedFilename := url.PathEscape(filename)
+	headerValue := fmt.Sprintf("attachment; filename=\"%s\"; filename*=UTF-8''%s", filename, encodedFilename)
+	w.Header().Set("Content-Disposition", headerValue)
+
+	http.ServeFile(w, r, music.FilePath)
 }
 
 func lyricHandler(w http.ResponseWriter, r *http.Request) {
 	musicId := strings.TrimPrefix(r.URL.Path, "/music/lyric/")
 	if val, ok := musicIdMap[musicId]; ok {
 		lyricPath := strings.TrimSuffix(val.FilePath, filepath.Ext(val.FilePath)) + ".lrc"
-		// 检查歌词文件是否存在
+
 		if _, err := os.Stat(lyricPath); err == nil {
-			http.ServeFile(w, r, lyricPath)
+			f, err := os.Open(lyricPath)
+			if err != nil {
+				http.NotFound(w, r)
+				return
+			}
+			defer f.Close()
+
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+			w.Header().Set("Pragma", "no-cache")
+			w.Header().Set("Expires", "0")
+
+			filename := filepath.Base(lyricPath)
+			modTime := time.Time{}
+			http.ServeContent(w, r, filename, modTime, f)
 		} else {
 			http.NotFound(w, r)
 		}
 	} else {
 		http.NotFound(w, r)
 	}
-
 }
 
 func extractCover(filePath string) ([]byte, string, error) {
@@ -188,7 +260,7 @@ func extractCover(filePath string) ([]byte, string, error) {
 
 	pic := m.Picture()
 	if pic == nil {
-		return nil, "", fmt.Errorf("无封面")
+		return nil, "", fmt.Errorf("NO COVER")
 	}
 
 	return pic.Data, pic.MIMEType, nil
@@ -199,7 +271,7 @@ func coverHandler(w http.ResponseWriter, r *http.Request) {
 	if val, ok := musicIdMap[musicId]; ok {
 		coverData, mimeType, err := extractCover(val.FilePath)
 		if err != nil {
-			http.Error(w, "封面未找到", http.StatusNotFound)
+			http.Error(w, "Cover not found", http.StatusNotFound)
 			return
 		}
 
