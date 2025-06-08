@@ -1,16 +1,17 @@
 package main
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"flag"
 	"fmt"
 	tag "github.com/unitnotes/audiotag"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -93,6 +94,21 @@ func main() {
 	log.Fatal(http.ListenAndServe(":"+portFlag, nil))
 }
 
+func generateIDByHash(filePath string) (string, error) {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	hash := sha256.New()
+	if _, err := io.Copy(hash, f); err != nil {
+		return "", err
+	}
+
+	return fmt.Sprintf("%x", hash.Sum(nil)), nil
+}
+
 func processMusicFile(filePath string) {
 	f, err := os.Open(filePath)
 	if err != nil {
@@ -105,8 +121,11 @@ func processMusicFile(filePath string) {
 		return
 	}
 
-	// Create a unique ID (simply use file path hash here)
-	musicId := strconv.FormatInt(int64(filePath[len(filePath)-1]), 10)
+	musicId, err := generateIDByHash(filePath)
+	if err != nil {
+		log.Fatalf("Unable to generate music id: %v\n", err)
+		return
+	}
 	// Building music objects
 	music := Music{
 		MusicId:  musicId,
